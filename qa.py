@@ -1,31 +1,43 @@
 import streamlit as st
 import pandas as pd
+import os
 from datetime import datetime
 
 # --- পেজ কনফিগারেশন ---
 st.set_page_config(page_title="Support Quality Tool", layout="wide")
 
-# --- ১. সেশন স্টেট হ্যান্ডলিং ---
+# --- ডাটাবেস ফাইল পাথ (পার্মানেন্ট স্টোরেজ) ---
+AGENT_FILE = "agents.csv"
+PARAM_FILE = "parameters.csv"
+AUDIT_FILE = "audit_logs.csv"
+
+# --- ডাটা লোড ও সেভ ফাংশন ---
+def load_data(file_path, columns):
+    if os.path.exists(file_path):
+        return pd.read_csv(file_path)
+    return pd.DataFrame(columns=columns)
+
+def save_data(df, file_path):
+    df.to_csv(file_path, index=False)
+
+# --- ৩. সেশন স্টেট হ্যান্ডলিং (পার্মানেন্ট স্টোরেজ থেকে লোড) ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.role = None
     st.session_state.user_id = None
 
 if 'agent_db' not in st.session_state:
-    # ডাটাবেসে আপনার চাহিদা অনুযায়ী সব কলাম রাখা হয়েছে
-    st.session_state.agent_db = pd.DataFrame(columns=[
-        'ID', 'Name', 'Gender', 'Contact', 'Emergency_Contact', 'Channel', 'Status'
-    ])
+    st.session_state.agent_db = load_data(AGENT_FILE, ['ID', 'Name', 'Gender', 'Contact', 'Emergency_Contact', 'Channel', 'Status'])
 
 if 'param_db' not in st.session_state:
-    st.session_state.param_db = pd.DataFrame(columns=['Channel', 'Skill_Type', 'Parameter', 'Max_Score'])
+    st.session_state.param_db = load_data(PARAM_FILE, ['Channel', 'Skill_Type', 'Parameter', 'Max_Score'])
 
 if 'audit_logs' not in st.session_state:
-    columns = ['Week', 'Evaluation Date', 'Evaluator Name', 'Agent Name', 'Employee ID', 
-               'Channel', 'Interaction Date', 'Eval_ID', 'QA Feedback', 'Status', 'Total Score']
-    st.session_state.audit_logs = pd.DataFrame(columns=columns)
+    audit_cols = ['Week', 'Evaluation Date', 'Evaluator Name', 'Agent Name', 'Employee ID', 
+                  'Channel', 'Interaction Date', 'Eval_ID', 'QA Feedback', 'Status', 'Total Score']
+    st.session_state.audit_logs = load_data(AUDIT_FILE, audit_cols)
 
-# --- ২. লগইন ফাংশন ---
+# --- ৪. লগইন ফাংশন ---
 def login():
     st.title("🛡️ Customer Support Quality Tool")
     col1, _ = st.columns([1, 1])
@@ -50,6 +62,7 @@ def login():
 if not st.session_state.logged_in:
     login()
 else:
+    # রোল অনুযায়ী মেনু ফিল্টার
     if st.session_state.role == "Admin":
         menu = ["Agent Details", "Audit Parameters", "QA Audit Entry", "Publish Audits", "Audit Logs"]
     else:
@@ -63,22 +76,18 @@ else:
             del st.session_state[key]
         st.rerun()
 
-    # --- ১. এজেন্ট ডিটেইলস (Admin Only - Updated with Update Logic) ---
+    # --- ১. এজেন্ট ডিটেইলস (Add/Update/Permanent Save) ---
     if choice == "Agent Details":
         st.header("👥 Agent Management")
-        
         tab1, tab2 = st.tabs(["Add/Update Agent", "View Agent List"])
         
         with tab1:
             st.subheader("Manage Agent Information")
-            
-            # আপডেট করার জন্য এজেন্ট সার্চ/সিলেক্ট
-            existing_agents = st.session_state.agent_db['ID'].tolist()
+            existing_agents = st.session_state.agent_db['ID'].astype(str).tolist()
             edit_id = st.selectbox("Select Agent ID to Update (or leave empty for New)", [""] + existing_agents)
             
-            # যদি আপডেট করার জন্য আইডি সিলেক্ট করা হয়, তবে আগের ভ্যালুগুলো নিয়ে আসবে
             if edit_id:
-                agent_data = st.session_state.agent_db[st.session_state.agent_db['ID'] == edit_id].iloc[0]
+                agent_data = st.session_state.agent_db[st.session_state.agent_db['ID'].astype(str) == edit_id].iloc[0]
                 default_name = agent_data['Name']
                 default_gender = agent_data['Gender']
                 default_contact = agent_data['Contact']
@@ -87,12 +96,7 @@ else:
                 default_stat = agent_data['Status']
                 button_label = "Update Agent Information"
             else:
-                default_name = ""
-                default_gender = "Male"
-                default_contact = ""
-                default_emg = ""
-                default_chan = "Inbound"
-                default_stat = "Active"
+                default_name, default_gender, default_contact, default_emg, default_chan, default_stat = "", "Male", "", "", "Inbound", "Active"
                 button_label = "Save New Agent"
 
             with st.form("agent_form", clear_on_submit=not edit_id):
@@ -100,34 +104,25 @@ else:
                 a_id = col1.text_input("Employee ID", value=edit_id if edit_id else "")
                 a_name = col2.text_input("Agent Name", value=default_name)
                 
-                a_gen = col1.selectbox("Gender", ["Male", "Female", "Other"], 
-                                      index=["Male", "Female", "Other"].index(default_gender))
+                a_gen = col1.selectbox("Gender", ["Male", "Female", "Other"], index=["Male", "Female", "Other"].index(default_gender))
                 a_con = col2.text_input("Contact Number", value=default_contact)
                 
                 a_emg = col1.text_input("Emergency Contact Number", value=default_emg)
-                a_chan = col2.selectbox("Assigned Channel", 
-                                       ["Inbound", "Live Chat", "Report Issue", "Complaint Management"],
+                a_chan = col2.selectbox("Assigned Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"],
                                        index=["Inbound", "Live Chat", "Report Issue", "Complaint Management"].index(default_chan))
                 
-                a_stat = col1.selectbox("Status", ["Active", "Resigned"],
-                                       index=["Active", "Resigned"].index(default_stat))
+                a_stat = col1.selectbox("Status", ["Active", "Resigned"], index=["Active", "Resigned"].index(default_stat))
                 
                 if st.form_submit_button(button_label):
                     if a_id and a_name:
-                        new_data = {
-                            'ID': a_id, 'Name': a_name, 'Gender': a_gen, 
-                            'Contact': a_con, 'Emergency_Contact': a_emg, 
-                            'Channel': a_chan, 'Status': a_stat
-                        }
-                        
-                        # যদি আইডি আগে থেকেই থাকে তবে সেটা আপডেট হবে, নাহলে নতুন রো যোগ হবে
+                        new_data = [a_id, a_name, a_gen, a_con, a_emg, a_chan, a_stat]
                         if edit_id:
-                            st.session_state.agent_db.loc[st.session_state.agent_db['ID'] == edit_id] = new_data.values()
-                            st.success(f"Updated information for {a_name}")
+                            st.session_state.agent_db.loc[st.session_state.agent_db['ID'].astype(str) == edit_id] = new_data
                         else:
-                            new_row = pd.DataFrame([new_data])
-                            st.session_state.agent_db = pd.concat([st.session_state.agent_db, new_row]).drop_duplicates(subset=['ID'], keep='last')
-                            st.success(f"Agent {a_name} added successfully!")
+                            st.session_state.agent_db.loc[len(st.session_state.agent_db)] = new_data
+                        
+                        save_data(st.session_state.agent_db, AGENT_FILE)
+                        st.success("Agent data saved successfully!")
                         st.rerun()
                     else:
                         st.error("Employee ID and Name are mandatory!")
@@ -145,8 +140,8 @@ else:
             p_score = st.number_input("Max Score", min_value=1, value=10)
             if st.form_submit_button("Add Parameter"):
                 if p_name:
-                    new_p = pd.DataFrame([[p_chan, p_skill, p_name, p_score]], columns=st.session_state.param_db.columns)
-                    st.session_state.param_db = pd.concat([st.session_state.param_db, new_p], ignore_index=True)
+                    st.session_state.param_db.loc[len(st.session_state.param_db)] = [p_chan, p_skill, p_name, p_score]
+                    save_data(st.session_state.param_db, PARAM_FILE)
                     st.success(f"Parameter '{p_name}' added!")
         st.dataframe(st.session_state.param_db, use_container_width=True)
 
@@ -175,7 +170,6 @@ else:
             sel_agent = c3.selectbox("Agent Name", ["Select Agent"] + agent_list['Name'].tolist())
             
             emp_id = agent_list[agent_list['Name'] == sel_agent]['ID'].values[0] if sel_agent != "Select Agent" else ""
-            
             f1, f2, f3 = st.columns(3)
             f1.text_input("Employee ID", value=emp_id, disabled=True)
             eval_id = f2.text_input("Call/Chat ID")
@@ -209,9 +203,9 @@ else:
                         'QA Feedback': feedback, 'Status': 'Pending', 'Total Score': sum(audit_scores.values())
                     }
                     entry.update(audit_scores)
-                    new_row = pd.DataFrame([entry])
-                    st.session_state.audit_logs = pd.concat([st.session_state.audit_logs, new_row], ignore_index=True)
-                    st.success("Audit submitted and waiting for publication!")
+                    st.session_state.audit_logs = pd.concat([st.session_state.audit_logs, pd.DataFrame([entry])], ignore_index=True)
+                    save_data(st.session_state.audit_logs, AUDIT_FILE)
+                    st.success("Audit submitted successfully!")
                     st.balloons()
 
     # --- ৪. পাবলিশ অডিট ---
@@ -222,26 +216,25 @@ else:
         else:
             pending_audits = st.session_state.audit_logs[st.session_state.audit_logs['Status'] == 'Pending']
             if pending_audits.empty:
-                st.info("Everything is up to date!")
+                st.info("No pending audits.")
             else:
                 st.dataframe(pending_audits, use_container_width=True)
                 if st.button("Publish All to Agents", type="primary"):
                     st.session_state.audit_logs.loc[st.session_state.audit_logs['Status'] == 'Pending', 'Status'] = 'Published'
-                    st.success("Audits are now live!")
+                    save_data(st.session_state.audit_logs, AUDIT_FILE)
+                    st.success("Audits published!")
                     st.rerun()
 
     # --- ৫. অডিট লগ ---
     elif choice == "Audit Logs":
         st.header("📊 Full Audit History")
         st.dataframe(st.session_state.audit_logs, use_container_width=True)
+        st.download_button("Download Master CSV", st.session_state.audit_logs.to_csv(index=False), "QA_Master_Report.csv")
 
-    # --- ৬. এজেন্ট পারফরম্যান্স ---
+    # --- ৬. এজেন্ট পারফরম্যান্স (Agent View) ---
     elif choice == "My Performance":
-        st.header(f"📈 Performance (ID: {st.session_state.user_id})")
-        my_audits = st.session_state.audit_logs[
-            (st.session_state.audit_logs['Employee ID'] == st.session_state.user_id) & 
-            (st.session_state.audit_logs['Status'] == 'Published')
-        ]
+        st.header(f"📈 My Performance (ID: {st.session_state.user_id})")
+        my_audits = st.session_state.audit_logs[(st.session_state.audit_logs['Employee ID'].astype(str) == str(st.session_state.user_id)) & (st.session_state.audit_logs['Status'] == 'Published')]
         if my_audits.empty:
             st.warning("No published audits found.")
         else:
