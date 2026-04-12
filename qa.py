@@ -81,10 +81,26 @@ else:
                     st.success("Added!")
         st.dataframe(st.session_state.param_db, use_container_width=True)
 
-    # --- ৩. QA অডিট এন্ট্রি (Updated with Validation & Column Order) ---
+    # --- ৩. QA অডিট এন্ট্রি (Updated with Date & Warning) ---
     elif choice == "QA Audit Entry":
         st.header("📝 Quality Audit Form")
         
+        # --- নতুন আপডেট: ডেট এবং সিস্টেম ওয়ার্নিং ---
+        today = datetime.now()
+        current_date = today.strftime("%d %B, %Y")
+        current_day = today.strftime("%A")
+        
+        # টপ ইনফো বার
+        col_date, col_day = st.columns(2)
+        col_date.info(f"📅 **Date:** {current_date}")
+        col_day.info(f"⏳ **Day:** {current_day}")
+
+        # শনিবারের ওয়ার্নিং মেসেজ
+        if current_day == "Saturday":
+            st.warning("⚠️ Today is the last day for this week's Audit! Please ensure all pending audits are completed.")
+        
+        st.divider()
+
         # ১. ইনফরমেশন সেকশন
         with st.container():
             c1, c2, c3 = st.columns(3)
@@ -126,17 +142,14 @@ else:
                 col_b.caption(f"Score: {audit_scores[row['Parameter']]}")
 
             if st.button("Submit Audit", type="primary"):
-                # সব ফিল্ড চেক (Validation)
                 if not evaluator or sel_agent == "Select Agent" or not eval_id or not feedback:
                     st.error("Please fill all required fields before submitting!")
                 else:
-                    # ক্যালকুলেশন
                     soft_obtained = sum(audit_scores[p] for p in params[params['Skill_Type'] == 'Soft Skill']['Parameter'])
                     soft_max = params[params['Skill_Type'] == 'Soft Skill']['Max_Score'].sum()
                     service_obtained = sum(audit_scores[p] for p in params[params['Skill_Type'] == 'Service Skill']['Parameter'])
                     service_max = params[params['Skill_Type'] == 'Service Skill']['Max_Score'].sum()
                     
-                    # ডাটা এন্ট্রি (আপনার সিরিয়াল অনুযায়ী)
                     entry = {
                         'Evaluation Date': datetime.now().strftime("%Y-%m-%d"),
                         'Evaluator Name': evaluator,
@@ -148,10 +161,8 @@ else:
                         'Eval_ID': eval_id,
                         'QA Feedback': feedback
                     }
-                    # প্যারামিটার স্কোরগুলো সিরিয়ালে রাখা
                     entry.update(audit_scores)
                     
-                    # শেষে টোটাল এবং পার্সেন্টেজ
                     entry['Total Score'] = sum(audit_scores.values())
                     entry['Soft Skill %'] = f"{(soft_obtained / soft_max * 100):.2f}%" if soft_max > 0 else "0.00%"
                     entry['Service Skill %'] = f"{(service_obtained / service_max * 100):.2f}%" if service_max > 0 else "0.00%"
@@ -165,7 +176,6 @@ else:
     elif choice == "Audit Logs":
         st.header("📊 Audit History")
         if not st.session_state.audit_logs.empty:
-            # কলাম সিরিয়াল ঠিক করা (যদি নতুন প্যারামিটার এড হয় তাও যেন সিরিয়াল বজায় থাকে)
             base_cols = ['Evaluation Date', 'Evaluator Name', 'Agent Name', 'Employee ID', 'Channel', 'Interaction Date', 'Interaction Time', 'Eval_ID', 'QA Feedback']
             other_cols = [c for c in st.session_state.audit_logs.columns if c not in base_cols + ['Total Score', 'Soft Skill %', 'Service Skill %']]
             final_cols = base_cols + other_cols + ['Total Score', 'Soft Skill %', 'Service Skill %']
