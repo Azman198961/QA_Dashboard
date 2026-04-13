@@ -13,12 +13,12 @@ st.markdown(f"""
     @import url('https://fonts.googleapis.com/css2?family=Anek+Bangla:wght@400;700&family=Comic+Sans+MS&display=swap');
     html, body, [class*="st-"] {{ font-family: "Comic Sans MS", "Anek Bangla", sans-serif !important; font-size: 13px; }}
     div[data-baseweb="select"] > div, .stTextInput input, .stTextArea textarea, .stNumberInput input, .stDateInput input {{
-        background-color: #000000 !important; color: {PATHAO_RED} !important; border: 1px solid white !important; font-size: 13px !important;
+        background-color: #000000 !important; color: {PATHAO_RED} !important; border: 1px solid white !important; font-size: 12px !important;
     }}
     label, .stMarkdown p {{ color: white !important; font-weight: bold; }}
     button[kind="primary"] {{ background-color: white !important; color: {PATHAO_RED} !important; border-radius: 4px; font-weight: bold; border: none; }}
-    .skill-container {{ background-color: #1e1e1e; padding: 15px; border-radius: 10px; border: 2px solid white; margin-bottom: 20px; }}
-    .param-row {{ border-bottom: 1px solid #444; padding: 10px 0; }}
+    .skill-box {{ background-color: #1e1e1e; padding: 15px; border-radius: 8px; border: 1px solid white; min-height: 400px; }}
+    .param-row {{ background-color: #2b2b2b; padding: 10px; border-radius: 5px; margin-bottom: 10px; border-left: 5px solid white; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -52,10 +52,8 @@ if not st.session_state.logged_in:
                 st.session_state.update({"logged_in": True, "role": role})
                 st.rerun()
             else: st.error("Wrong Password")
-
-# --- 4. MAIN APP ---
 else:
-    st.sidebar.info(f"Role: {st.session_state.role}")
+    st.sidebar.info(f"Active Role: {st.session_state.role}")
     nav = {
         "Admin": ["Agent Details", "Audit Parameters", "Audit Logs"],
         "QA": ["QA Audit Entry", "Publish Audits", "Audit Logs"],
@@ -74,139 +72,119 @@ else:
             with st.form("add_ag"):
                 c1, c2 = st.columns(2)
                 n_id, n_name = c1.text_input("Employee ID"), c2.text_input("Agent Name")
-                n_gen, n_con = c1.selectbox("Gender", ["Male", "Female"]), c2.text_input("Contact")
-                n_emg, n_chan = c1.text_input("Emergency Contact"), c2.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
+                n_chan = c2.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
                 n_stat = st.selectbox("Status", ["Active", "Resigned"])
-                if st.form_submit_button("Save"):
-                    new_ag = pd.DataFrame([[n_id, n_name, n_gen, n_con, n_emg, n_chan, n_stat]], columns=agent_cols)
+                if st.form_submit_button("Save Agent"):
+                    new_ag = pd.DataFrame([[n_id, n_name, "N/A", "N/A", "N/A", n_chan, n_stat]], columns=agent_cols)
                     st.session_state.agent_db = pd.concat([st.session_state.agent_db, new_ag], ignore_index=True)
                     save_data(st.session_state.agent_db, AGENT_FILE); st.success("Saved!")
-        with t2:
-            ag_up = st.selectbox("Select Agent", [""] + st.session_state.agent_db['Name'].tolist())
-            if ag_up:
-                curr = st.session_state.agent_db[st.session_state.agent_db['Name'] == ag_up].iloc[0]
-                with st.form("up_ag"):
-                    u_id = st.text_input("ID", value=curr['ID'])
-                    u_ch = st.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"], index=["Inbound", "Live Chat", "Report Issue", "Complaint Management"].index(curr['Channel']))
-                    u_st = st.selectbox("Status", ["Active", "Resigned"], index=["Active", "Resigned"].index(curr['Status']))
-                    if st.form_submit_button("Update"):
-                        idx = st.session_state.agent_db[st.session_state.agent_db['Name'] == ag_up].index[0]
-                        st.session_state.agent_db.loc[idx, ['ID', 'Channel', 'Status']] = [u_id, u_ch, u_st]
-                        save_data(st.session_state.agent_db, AGENT_FILE); st.rerun()
+
         with t3: st.dataframe(st.session_state.agent_db, use_container_width=True)
 
-    # --- QA AUDIT ENTRY (FIXED LAYOUT & DEMARK) ---
+    # --- QA AUDIT ENTRY (SIDE-BY-SIDE TABLES) ---
     elif choice == "QA Audit Entry":
         st.header("📝 QA Audit Entry")
-        sel_ch = st.selectbox("1. Select Channel First", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
+        sel_ch = st.selectbox("1. Select Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
         active_agents = st.session_state.agent_db[(st.session_state.agent_db['Channel'] == sel_ch) & (st.session_state.agent_db['Status'] == 'Active')]
         
-        # Initial Info Section
-        c1, c2 = st.columns(2)
-        ag_nm = c1.selectbox("2. Agent Name", [""] + active_agents['Name'].tolist())
+        col_id1, col_id2 = st.columns(2)
+        ag_nm = col_id1.selectbox("2. Agent Name", [""] + active_agents['Name'].tolist())
         eid = active_agents[active_agents['Name'] == ag_nm]['ID'].values[0] if ag_nm else "---"
-        c2.info(f"ID: {eid}")
+        col_id2.info(f"Agent ID: {eid}")
         
         f1, f2, f3 = st.columns(3)
         int_id, int_dt, int_tm = f1.text_input("Interaction ID"), f2.date_input("Date"), f3.text_input("Time (Manual)")
 
-        # Prepare Scoring Storage
-        scores = {}
-        all_params = st.session_state.param_db[st.session_state.param_db['Channel'] == sel_ch]
+        st.divider()
 
-        # SEPARATE SECTIONS FOR SKILLS
-        for skill_type in ["Soft Skill", "Service Skill"]:
-            st.markdown(f'<div class="skill-container"><h3>{skill_type} Section</h3>', unsafe_allow_html=True)
-            skill_params = all_params[all_params['Skill_Type'] == skill_type]
-            
-            if skill_params.empty:
-                st.write("No parameters added for this skill.")
-            else:
-                for _, row in skill_params.iterrows():
-                    p_name = row['Parameter']
-                    p_max = row['Max_Score']
-                    
-                    st.markdown(f'<div class="param-row">', unsafe_allow_html=True)
-                    cols = st.columns([4, 2, 4])
-                    cols[0].write(f"**{p_name}** (Max: {p_max})")
-                    is_demark = cols[1].checkbox("Demark", key=f"dm_{p_name}")
-                    
-                    if is_demark:
-                        reason = cols[2].text_input("Demark Reason", key=f"res_{p_name}")
-                        scores[p_name] = f"0 ({reason})"
+        # Side by Side Layout for Skills
+        left_col, right_col = st.columns(2)
+        all_params = st.session_state.param_db[st.session_state.param_db['Channel'] == sel_ch]
+        scores = {}
+
+        # SOFT SKILL TABLE (LEFT)
+        with left_col:
+            st.markdown('<div class="skill-box"><h3>🛡️ Soft Skill</h3>', unsafe_allow_html=True)
+            soft_params = all_params[all_params['Skill_Type'] == 'Soft Skill']
+            for _, row in soft_params.iterrows():
+                with st.container():
+                    st.markdown(f'<div class="param-row"><b>{row["Parameter"]}</b> (Max: {row["Max_Score"]})', unsafe_allow_html=True)
+                    dm_check = st.checkbox("Demark", key=f"dm_{row['Parameter']}")
+                    if dm_check:
+                        res = st.text_input("Reason", key=f"res_{row['Parameter']}", placeholder="Why demarked?")
+                        scores[row['Parameter']] = f"0 ({res})"
                     else:
-                        scores[p_name] = p_max
+                        scores[row['Parameter']] = row['Max_Score']
                     st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-        if st.button("Submit Audit Report", type="primary"):
+        # SERVICE SKILL TABLE (RIGHT)
+        with right_col:
+            st.markdown('<div class="skill-box"><h3>🛠️ Service Skill</h3>', unsafe_allow_html=True)
+            serv_params = all_params[all_params['Skill_Type'] == 'Service Skill']
+            for _, row in serv_params.iterrows():
+                with st.container():
+                    st.markdown(f'<div class="param-row"><b>{row["Parameter"]}</b> (Max: {row["Max_Score"]})', unsafe_allow_html=True)
+                    dm_check = st.checkbox("Demark", key=f"dm_{row['Parameter']}")
+                    if dm_check:
+                        res = st.text_input("Reason", key=f"res_{row['Parameter']}", placeholder="Why demarked?")
+                        scores[row['Parameter']] = f"0 ({res})"
+                    else:
+                        scores[row['Parameter']] = row['Max_Score']
+                    st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        if st.button("Submit Audit Report", type="primary", use_container_width=True):
             if ag_nm and int_id:
-                # Calc Weightage
-                def clean_val(v): return 0 if isinstance(v, str) else v
+                def clean_v(v): return 0 if isinstance(v, str) else v
                 
-                soft_list = all_params[all_params['Skill_Type'] == 'Soft Skill']['Parameter'].tolist()
-                serv_list = all_params[all_params['Skill_Type'] == 'Service Skill']['Parameter'].tolist()
-                
-                sft_earned = sum([clean_val(scores[p]) for p in soft_list if p in scores])
-                sft_max = all_params[all_params['Skill_Type'] == 'Soft Skill']['Max_Score'].sum()
-                srv_earned = sum([clean_val(scores[p]) for p in serv_list if p in scores])
-                srv_max = all_params[all_params['Skill_Type'] == 'Service Skill']['Max_Score'].sum()
+                sft_earned = sum([clean_v(scores[p]) for p in soft_params['Parameter'] if p in scores])
+                sft_max = soft_params['Max_Score'].sum()
+                srv_earned = sum([clean_v(scores[p]) for p in serv_params['Parameter'] if p in scores])
+                srv_max = serv_params['Max_Score'].sum()
                 
                 entry = {
                     'Week': datetime.now().isocalendar()[1], 'Evaluation Date': datetime.now().strftime("%Y-%m-%d"),
                     'Agent Name': ag_nm, 'Employee ID': eid, 'Channel': sel_ch,
-                    'Eval_ID': int_id, 'Interaction Date': str(int_dt), 'Interaction Time': int_tm,
-                    'Status': 'Pending'
+                    'Eval_ID': int_id, 'Interaction Date': str(int_dt), 'Interaction Time': int_tm, 'Status': 'Pending'
                 }
                 entry.update(scores)
-                entry['Total Score'] = sum([clean_val(v) for v in scores.values()])
+                entry['Total Score'] = sum([clean_v(v) for v in scores.values()])
                 entry['Soft Skill %'] = round((sft_earned/sft_max)*100, 2) if sft_max > 0 else 0
                 entry['Service Skill %'] = round((srv_earned/srv_max)*100, 2) if srv_max > 0 else 0
                 
                 st.session_state.audit_logs = pd.concat([st.session_state.audit_logs, pd.DataFrame([entry])], ignore_index=True)
                 save_data(st.session_state.audit_logs, AUDIT_FILE)
-                st.success("Evaluation Saved!")
+                st.success("Audit Recorded!")
                 st.rerun()
 
-    # --- PUBLISH AUDITS ---
+    # --- PUBLISH & VIEW (SAME LOGIC) ---
     elif choice == "Publish Audits":
-        st.header("📢 Pending Publications")
+        st.header("📢 Publish Audits")
         pending = st.session_state.audit_logs[st.session_state.audit_logs['Status'] == 'Pending']
-        if not pending.empty:
-            st.dataframe(pending)
-            if st.button("Publish All", type="primary"):
-                st.session_state.audit_logs.loc[st.session_state.audit_logs['Status'] == 'Pending', 'Status'] = 'Published'
-                save_data(st.session_state.audit_logs, AUDIT_FILE); st.rerun()
-        else: st.info("Clear!")
+        st.dataframe(pending, use_container_width=True)
+        if st.button("Publish All"):
+            st.session_state.audit_logs.loc[st.session_state.audit_logs['Status'] == 'Pending', 'Status'] = 'Published'
+            save_data(st.session_state.audit_logs, AUDIT_FILE); st.rerun()
 
-    # --- AUDIT LOGS & AUDIT VIEW ---
     elif choice in ["Audit Logs", "Audit View"]:
-        st.header("📊 Detailed Audit View")
-        logs = st.session_state.audit_logs.copy()
-        if choice == "Audit View": logs = logs[logs['Status'] == 'Published']
+        st.header("📋 Audit Data")
+        df = st.session_state.audit_logs.copy()
+        if choice == "Audit View": df = df[df['Status'] == 'Published']
         
-        if not logs.empty:
-            weeks = ["All"] + sorted(list(logs['Week'].unique().astype(str)))
-            sel_week = st.selectbox("Week Filter", weeks)
-            if sel_week != "All": logs = logs[logs['Week'].astype(str) == sel_week]
-            
-            # Reorder
-            base = ['Week', 'Evaluation Date', 'Agent Name', 'Employee ID', 'Channel', 'Eval_ID', 'Interaction Date', 'Interaction Time']
-            results = ['Total Score', 'Soft Skill %', 'Service Skill %', 'Status']
-            params_cols = [c for c in logs.columns if c not in base + results]
-            st.dataframe(logs[base + params_cols + results], use_container_width=True)
+        # Display Columns Logic
+        fixed = ['Week', 'Evaluation Date', 'Agent Name', 'Employee ID', 'Channel', 'Eval_ID', 'Interaction Date', 'Interaction Time']
+        end = ['Total Score', 'Soft Skill %', 'Service Skill %', 'Status']
+        dyn = [c for c in df.columns if c not in fixed + end]
+        st.dataframe(df[fixed + dyn + end], use_container_width=True)
 
-    # --- PARAMETERS SETUP ---
     elif choice == "Audit Parameters":
-        st.header("⚙️ Parameters Setup")
+        st.header("⚙️ Settings")
         with st.form("p_f"):
             c1, c2 = st.columns(2)
-            pc = c1.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
-            ps = c2.selectbox("Skill Group", ["Soft Skill", "Service Skill"])
-            pn = st.text_input("Parameter Name")
-            pm = st.number_input("Max Score", min_value=1)
-            if st.form_submit_button("Add Parameter"):
+            pc, ps = c1.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"]), c2.selectbox("Skill", ["Soft Skill", "Service Skill"])
+            pn, pm = st.text_input("Param Name"), st.number_input("Max Score", min_value=1)
+            if st.form_submit_button("Add"):
                 new_p = pd.DataFrame([[pc, ps, pn, pm]], columns=param_cols)
                 st.session_state.param_db = pd.concat([st.session_state.param_db, new_p], ignore_index=True)
                 save_data(st.session_state.param_db, PARAM_FILE); st.rerun()
-        st.dataframe(st.session_state.param_db, use_container_width=True)
