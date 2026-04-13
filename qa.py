@@ -111,6 +111,7 @@ if not st.session_state.logged_in:
             if pwd == "1234":
                 st.session_state.logged_in, st.session_state.role, st.session_state.user_id = True, role, u_id
                 st.rerun()
+            else: st.error("Wrong Password")
 else:
     # Sidebar Navigation
     st.sidebar.markdown('<img src="https://static.wixstatic.com/media/252924_6d50ff019be740e599b66059d747d6e6~mv2.png/v1/fill/w_400,h_400,al_c,q_85,usm_0.66_1.00_0.01,enc_avif/252924_6d50ff019be740e599b66059d747d6e6~mv2.png" style="width:40px;">', unsafe_allow_html=True)
@@ -128,13 +129,14 @@ else:
         st.session_state.logged_in = False
         st.rerun()
 
-    # --- 1. AGENT DETAILS (RESTORED ALL FIELDS + ADD/UPDATE TABS) ---
+    # --- 1. AGENT DETAILS (With clear_on_submit) ---
     if choice == "Agent Details":
         st.header("👥 Agent Management")
         tab1, tab2, tab3 = st.tabs(["Add New Agent", "Update Existing Agent", "Agent List"])
         
         with tab1:
-            with st.form("add_agent_form"):
+            # clear_on_submit=True ব্যবহার করা হয়েছে যাতে সাবমিট করার পর সব ফিল্ড ফাঁকা হয়ে যায়
+            with st.form("add_agent_form", clear_on_submit=True):
                 c1, c2 = st.columns(2)
                 new_id = c1.text_input("Employee ID")
                 new_name = c2.text_input("Agent Name")
@@ -143,19 +145,24 @@ else:
                 new_emg = c1.text_input("Emergency Contact")
                 new_chan = c2.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
                 new_stat = c1.selectbox("Status", ["Active", "Resigned"])
+                
                 if st.form_submit_button("Save New Agent", type="primary"):
                     if new_id and new_name:
                         new_data = [new_id, new_name, new_gen, new_con, new_emg, new_chan, new_stat]
                         st.session_state.agent_db.loc[len(st.session_state.agent_db)] = new_data
                         save_data(st.session_state.agent_db, AGENT_FILE)
-                        st.success("New Agent Added!")
+                        st.success(f"Agent {new_name} added successfully!")
+                        # rerun করলে ডাটাবেস রিফ্রেশ হবে কিন্তু ফর্ম ফাঁকা থাকবে
                         st.rerun()
+                    else:
+                        st.error("Please provide Employee ID and Name.")
 
         with tab2:
             agent_ids = st.session_state.agent_db['ID'].astype(str).tolist()
             selected_id = st.selectbox("Select Agent ID to Update", [""] + agent_ids)
             if selected_id:
                 agent_info = st.session_state.agent_db[st.session_state.agent_db['ID'].astype(str) == selected_id].iloc[0]
+                # আপডেট ফর্মে সাধারণত clear_on_submit দেয়া হয় না কারণ ডাটা সামনে থাকা জরুরি
                 with st.form("update_agent_form"):
                     c1, c2 = st.columns(2)
                     u_name = c1.text_input("Name", value=agent_info['Name'])
@@ -174,20 +181,22 @@ else:
         with tab3:
             st.dataframe(st.session_state.agent_db, use_container_width=True)
 
-    # --- 2. AUDIT PARAMETERS ---
+    # --- ২. AUDIT PARAMETERS (With clear_on_submit) ---
     elif choice == "Audit Parameters":
         st.header("⚙️ Parameter Setup")
-        with st.form("param_form"):
+        with st.form("param_form", clear_on_submit=True):
             p_chan = st.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
             p_name = st.text_input("Parameter Name")
             p_score = st.number_input("Max Score", min_value=1, value=10)
             if st.form_submit_button("Add Parameter"):
-                st.session_state.param_db.loc[len(st.session_state.param_db)] = [p_chan, "Skill", p_name, p_score]
-                save_data(st.session_state.param_db, PARAM_FILE)
-                st.success("Added!")
+                if p_name:
+                    st.session_state.param_db.loc[len(st.session_state.param_db)] = [p_chan, "Skill", p_name, p_score]
+                    save_data(st.session_state.param_db, PARAM_FILE)
+                    st.success("Parameter Added!")
+                    st.rerun()
         st.dataframe(st.session_state.param_db, use_container_width=True)
 
-    # --- 3. QA AUDIT ENTRY (RESTORED ALL FIELDS) ---
+    # --- ৩. QA AUDIT ENTRY ---
     elif choice == "QA Audit Entry":
         st.header("📝 QA Audit Entry")
         today = datetime.now()
@@ -195,56 +204,59 @@ else:
         
         st.markdown(f"**Auditor:** {st.session_state.user_id} | **Week:** {week_num}")
         
-        c1, c2, c3 = st.columns(3)
-        sel_chan = c1.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
-        agent_list = st.session_state.agent_db[(st.session_state.agent_db['Channel'] == sel_chan) & (st.session_state.agent_db['Status'] == 'Active')]
-        sel_agent = c2.selectbox("Agent Name", ["Select Agent"] + agent_list['Name'].tolist())
-        eval_id = c3.text_input("Call/Chat ID")
-        
-        emp_id = agent_list[agent_list['Name'] == sel_agent]['ID'].values[0] if sel_agent != "Select Agent" else ""
-        
-        f1, f2 = st.columns(2)
-        f1.text_input("Employee ID", value=emp_id, disabled=True)
-        inter_date = f2.date_input("Interaction Date")
-        feedback = st.text_area("QA Feedback")
+        # QA Audit Entry ফর্মে অনেক সময় ডেমার্ক স্ট্যাটাস সেশন স্টেট এ থাকে, 
+        # তাই এখানে ম্যানুয়ালি ক্লিয়ার করা বেশি নিরাপদ।
+        with st.form("audit_entry_form", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            sel_chan = c1.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
+            agent_list = st.session_state.agent_db[(st.session_state.agent_db['Channel'] == sel_chan) & (st.session_state.agent_db['Status'] == 'Active')]
+            sel_agent = c2.selectbox("Agent Name", ["Select Agent"] + agent_list['Name'].tolist())
+            eval_id = c3.text_input("Call/Chat ID")
+            
+            emp_id = agent_list[agent_list['Name'] == sel_agent]['ID'].values[0] if sel_agent != "Select Agent" else ""
+            
+            f1, f2 = st.columns(2)
+            # Employee ID ভিউ হিসেবে রাখা হয়েছে
+            f1.info(f"Selected Employee ID: {emp_id}")
+            inter_date = f2.date_input("Interaction Date")
+            feedback = st.text_area("QA Feedback")
 
-        st.divider()
-        params = st.session_state.param_db[st.session_state.param_db['Channel'] == sel_chan]
-        if params.empty:
-            st.warning("No parameters found.")
-        else:
+            st.divider()
+            params = st.session_state.param_db[st.session_state.param_db['Channel'] == sel_chan]
             audit_scores = {}
-            for idx, row in params.iterrows():
-                u_key = f"dm_{idx}"
-                if u_key not in st.session_state: st.session_state[u_key] = False
-                
-                st.markdown(f'''<div class="param-box">
-                    <span style="color:{PATHAO_RED}; font-weight:bold;">{row['Parameter']} (Max: {row['Max_Score']})</span>
-                </div>''', unsafe_allow_html=True)
-                
-                if st.button(f"Demark {row['Parameter']}", key=f"btn_{idx}"):
-                    st.session_state[u_key] = not st.session_state[u_key]
-                
-                current_score = 0 if st.session_state[u_key] else row['Max_Score']
-                audit_scores[row['Parameter']] = current_score
-                st.caption(f"Score: {current_score}")
+            
+            if not params.empty:
+                for idx, row in params.iterrows():
+                    u_key = f"dm_{idx}"
+                    # সেশন স্টেট এর মাধ্যমে ডেমার্ক চেক করা
+                    is_demarked = st.checkbox(f"Demark: {row['Parameter']}", key=u_key)
+                    
+                    st.markdown(f'''<div class="param-box">
+                        <span style="color:{PATHAO_RED}; font-weight:bold;">{row['Parameter']} (Max: {row['Max_Score']})</span>
+                    </div>''', unsafe_allow_html=True)
+                    
+                    current_score = 0 if is_demarked else row['Max_Score']
+                    audit_scores[row['Parameter']] = current_score
 
-            if st.button("Submit Audit", type="primary"):
-                if sel_agent == "Select Agent" or not eval_id:
-                    st.error("Please fill required fields!")
-                else:
-                    entry = {
-                        'Week': week_num, 'Evaluation Date': today.strftime("%Y-%m-%d"),
-                        'Evaluator Name': st.session_state.user_id, 'Agent Name': sel_agent, 'Employee ID': emp_id,
-                        'Channel': sel_chan, 'Interaction Date': str(inter_date), 'Eval_ID': eval_id,
-                        'QA Feedback': feedback, 'Status': 'Pending', 'Total Score': sum(audit_scores.values())
-                    }
-                    st.session_state.audit_logs = pd.concat([st.session_state.audit_logs, pd.DataFrame([entry])], ignore_index=True)
-                    save_data(st.session_state.audit_logs, AUDIT_FILE)
-                    st.success("Audit submitted to Pending list!")
-                    st.balloons()
+                if st.form_submit_button("Submit Audit", type="primary"):
+                    if sel_agent == "Select Agent" or not eval_id:
+                        st.error("Please fill required fields!")
+                    else:
+                        entry = {
+                            'Week': week_num, 'Evaluation Date': today.strftime("%Y-%m-%d"),
+                            'Evaluator Name': st.session_state.user_id, 'Agent Name': sel_agent, 'Employee ID': emp_id,
+                            'Channel': sel_chan, 'Interaction Date': str(inter_date), 'Eval_ID': eval_id,
+                            'QA Feedback': feedback, 'Status': 'Pending', 'Total Score': sum(audit_scores.values())
+                        }
+                        st.session_state.audit_logs = pd.concat([st.session_state.audit_logs, pd.DataFrame([entry])], ignore_index=True)
+                        save_data(st.session_state.audit_logs, AUDIT_FILE)
+                        st.success("Audit submitted to Pending list and form cleared!")
+                        st.rerun()
+            else:
+                st.warning("No parameters found for this channel.")
+                st.form_submit_button("Submit", disabled=True)
 
-    # --- 4. PUBLISH AUDITS ---
+    # --- ৪. PUBLISH AUDITS ---
     elif choice == "Publish Audits":
         st.header("📢 Publish Audits")
         pending = st.session_state.audit_logs[st.session_state.audit_logs['Status'] == 'Pending']
