@@ -17,8 +17,8 @@ st.markdown(f"""
     }}
     label, .stMarkdown p {{ color: white !important; font-weight: bold; }}
     button[kind="primary"] {{ background-color: white !important; color: {PATHAO_RED} !important; border-radius: 4px; font-weight: bold; }}
-    .stDataFrame {{ background-color: white; border-radius: 5px; }}
-    .reval-card {{ background-color: #1e1e1e; padding: 15px; border-radius: 10px; border: 1px solid white; margin-bottom: 10px; }}
+    .skill-header {{ background-color: #1e1e1e; padding: 10px; border-radius: 5px; border: 1px solid white; text-align: center; margin-bottom: 15px; }}
+    .param-row {{ background-color: #2b2b2b; padding: 8px; border-radius: 5px; margin-bottom: 8px; border-left: 4px solid white; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -40,7 +40,7 @@ if 'param_db' not in st.session_state: st.session_state.param_db = load_data(PAR
 if 'audit_logs' not in st.session_state: st.session_state.audit_logs = load_data(AUDIT_FILE, [])
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 
-# --- 3. LOGIN & NAV ---
+# --- 3. NAVIGATION ---
 if not st.session_state.logged_in:
     st.title("Pathao Quality Portal")
     with st.form("login"):
@@ -62,139 +62,119 @@ else:
         st.session_state.logged_in = False
         st.rerun()
 
-    # --- 4. AGENT VIEW (FIXED TABLE & WEEKLY FILTER) ---
-    if choice == "Audit View":
-        st.header("📊 Your Published Audits")
-        df = st.session_state.audit_logs[st.session_state.audit_logs['Status'].isin(['Published', 'Re-validation Requested'])].copy()
-        
-        if df.empty:
-            st.info("No published audits found.")
-        else:
-            c1, c2 = st.columns(2)
-            sel_week = c1.selectbox("Filter Week", ["All"] + sorted(list(df['Week'].unique().astype(str))))
-            sel_chan = c2.selectbox("Filter Channel", ["All"] + list(df['Channel'].unique()))
-            
-            if sel_week != "All": df = df[df['Week'].astype(str) == sel_week]
-            if sel_chan != "All": df = df[df['Channel'] == sel_chan]
-
-            # Display Table
-            fixed_cols = ['Week', 'Channel', 'Eval_ID', 'Interaction Date', 'Total Score']
-            all_params = st.session_state.param_db['Parameter'].unique().tolist()
-            display_cols = fixed_cols + [p for p in all_params if p in df.columns]
-            
-            st.dataframe(df[display_cols], use_container_width=True)
-
-            # Re-validation Request Section
-            st.divider()
-            st.subheader("Challenge an Audit")
-            audit_to_rev = st.selectbox("Select Audit ID to Re-validate", [""] + df['Eval_ID'].tolist())
-            
-            if audit_to_rev:
-                row = df[df['Eval_ID'] == audit_to_rev].iloc[0]
-                # Filter params that have 0 score
-                zero_params = [p for p in all_params if p in row and "0 (" in str(row[p])]
-                
-                if zero_params:
-                    with st.form("rev_form"):
-                        reasons = {}
-                        for p in zero_params:
-                            reasons[p] = st.text_input(f"Reason for {p}", key=f"re_{p}")
-                        if st.form_submit_button("Submit Challenge"):
-                            idx = df[df['Eval_ID'] == audit_to_rev].index[0]
-                            st.session_state.audit_logs.at[idx, 'Status'] = 'Re-validation Requested'
-                            st.session_state.audit_logs.at[idx, 'Reval_Reasons'] = str(reasons)
-                            save_data(st.session_state.audit_logs, AUDIT_FILE)
-                            st.success("Request sent!")
-                            st.rerun()
-                else:
-                    st.write("No '0' score parameters found in this audit.")
-
-    # --- 5. QA RE-VALIDATION (ACCEPT/REJECT LOGIC) ---
-    elif choice == "Re-Validation":
-        st.header("⚖️ Re-Validation Requests")
-        requests = st.session_state.audit_logs[st.session_state.audit_logs['Status'] == 'Re-validation Requested']
-        
-        if requests.empty:
-            st.info("No pending requests.")
-        else:
-            for idx, row in requests.iterrows():
-                with st.container():
-                    st.markdown(f'<div class="reval-card"><h4>Audit: {row["Eval_ID"]} | Agent: {row["Agent Name"]}</h4>', unsafe_allow_html=True)
-                    reasons = eval(row['Reval_Reasons'])
-                    
-                    for p, r in reasons.items():
-                        st.write(f"**Parameter:** {p} | **Agent's Reason:** {r}")
-                        col1, col2 = st.columns(5)
-                        
-                        if col1.button("✅ Accept", key=f"acc_{idx}_{p}"):
-                            # Update to max score
-                            max_val = st.session_state.param_db[st.session_state.param_db['Parameter'] == p]['Max_Score'].values[0]
-                            st.session_state.audit_logs.at[idx, p] = max_val
-                            
-                            # CLEAN CALCULATION: Recalculate total accurately
-                            all_p = st.session_state.param_db[st.session_state.param_db['Channel'] == row['Channel']]['Parameter'].tolist()
-                            new_total = sum([ (float(st.session_state.audit_logs.at[idx, param]) if not isinstance(st.session_state.audit_logs.at[idx, param], str) else 0) for param in all_p if param in st.session_state.audit_logs.columns])
-                            
-                            st.session_state.audit_logs.at[idx, 'Total Score'] = new_total
-                            st.session_state.audit_logs.at[idx, 'Status'] = 'Published'
-                            save_data(st.session_state.audit_logs, AUDIT_FILE)
-                            st.success("Score Updated!")
-                            st.rerun()
-                            
-                        if col2.button("❌ Reject", key=f"rej_{idx}_{p}"):
-                            st.session_state.audit_logs.at[idx, 'Status'] = 'Published' # No change in score
-                            save_data(st.session_state.audit_logs, AUDIT_FILE)
-                            st.warning("Challenge Rejected.")
-                            st.rerun()
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-    # --- 6. REMAINING FEATURES (CLEANED) ---
-    elif choice == "QA Audit Entry":
-        st.header("📝 New Audit Entry")
+    # --- 4. QA AUDIT ENTRY (SIDE BY SIDE TABLES FIXED) ---
+    if choice == "QA Audit Entry":
+        st.header("📝 QA Audit Entry")
         sel_ch = st.selectbox("Select Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
         active_agents = st.session_state.agent_db[(st.session_state.agent_db['Channel'] == sel_ch) & (st.session_state.agent_db['Status'] == 'Active')]
         
-        c1, c2 = st.columns(2)
-        ag_nm = c1.selectbox("Agent", [""] + active_agents['Name'].tolist())
+        c1, c2, c3 = st.columns(3)
+        ag_nm = c1.selectbox("Agent Name", [""] + active_agents['Name'].tolist())
         int_id = c2.text_input("Interaction ID")
+        feedback = st.text_area("QA Feedback")
         
         st.divider()
+        left_col, right_col = st.columns(2)
         all_p = st.session_state.param_db[st.session_state.param_db['Channel'] == sel_ch]
         scores = {}
-        
-        for _, r in all_p.iterrows():
-            st.write(f"**{r['Parameter']}** (Max: {r['Max_Score']})")
-            dm = st.checkbox("Demark", key=f"dm_{r['Parameter']}")
-            if dm:
-                reason = st.text_input("Demark Reason", key=f"dr_{r['Parameter']}")
-                scores[r['Parameter']] = f"0 ({reason})"
-            else:
-                scores[r['Parameter']] = r['Max_Score']
-        
-        if st.button("Save Audit", type="primary"):
-            entry = {'Week': datetime.now().isocalendar()[1], 'Agent Name': ag_nm, 'Channel': sel_ch, 'Eval_ID': int_id, 'Status': 'Pending', 'Interaction Date': str(datetime.now().date())}
+
+        with left_col:
+            st.markdown('<div class="skill-header"><h3>🛡️ Soft Skill</h3></div>', unsafe_allow_html=True)
+            for _, r in all_p[all_p['Skill_Type'] == 'Soft Skill'].iterrows():
+                st.markdown(f'<div class="param-row"><b>{r["Parameter"]}</b> (Max: {r["Max_Score"]})', unsafe_allow_html=True)
+                dm = st.checkbox("Demark", key=f"dm_{r['Parameter']}")
+                scores[r['Parameter']] = f"0 ({st.text_input('Reason', key=f'res_{r.Parameter}')})" if dm else r['Max_Score']
+                st.markdown('</div>', unsafe_allow_html=True)
+
+        with right_col:
+            st.markdown('<div class="skill-header"><h3>🛠️ Service Skill</h3></div>', unsafe_allow_html=True)
+            for _, r in all_p[all_p['Skill_Type'] == 'Service Skill'].iterrows():
+                st.markdown(f'<div class="param-row"><b>{r["Parameter"]}</b> (Max: {r["Max_Score"]})', unsafe_allow_html=True)
+                dm = st.checkbox("Demark", key=f"dm_{r['Parameter']}")
+                scores[r['Parameter']] = f"0 ({st.text_input('Reason', key=f'res_{r.Parameter}')})" if dm else r['Max_Score']
+                st.markdown('</div>', unsafe_allow_html=True)
+
+        if st.button("Submit Audit", type="primary", use_container_width=True):
+            entry = {'Week': datetime.now().isocalendar()[1], 'Agent Name': ag_nm, 'Channel': sel_ch, 'Eval_ID': int_id, 'Status': 'Pending', 'Interaction Date': str(datetime.now().date()), 'QA Feedback': feedback}
             entry.update(scores)
-            # Safe calculation
             entry['Total Score'] = sum([v if isinstance(v, (int, float)) else 0 for v in scores.values()])
             st.session_state.audit_logs = pd.concat([st.session_state.audit_logs, pd.DataFrame([entry])], ignore_index=True)
             save_data(st.session_state.audit_logs, AUDIT_FILE)
-            st.success("Saved!")
+            st.success("Audit Recorded!")
 
+    # --- 5. PUBLISH AUDITS (ONLY PENDING) ---
     elif choice == "Publish Audits":
-        st.header("📢 Publish Pending Audits")
+        st.header("📢 Pending Publications")
         pending = st.session_state.audit_logs[st.session_state.audit_logs['Status'] == 'Pending']
-        st.dataframe(pending)
-        if st.button("Publish All"):
-            st.session_state.audit_logs.loc[st.session_state.audit_logs['Status'] == 'Pending', 'Publish_Time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            st.session_state.audit_logs.loc[st.session_state.audit_logs['Status'] == 'Pending', 'Status'] = 'Published'
-            save_data(st.session_state.audit_logs, AUDIT_FILE); st.rerun()
+        if not pending.empty:
+            st.dataframe(pending, use_container_width=True)
+            if st.button("Publish All Audits"):
+                st.session_state.audit_logs.loc[st.session_state.audit_logs['Status'] == 'Pending', 'Publish_Time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state.audit_logs.loc[st.session_state.audit_logs['Status'] == 'Pending', 'Status'] = 'Published'
+                save_data(st.session_state.audit_logs, AUDIT_FILE); st.rerun()
+        else: st.info("No pending audits to publish.")
 
-    elif choice == "Audit Parameters":
-        st.header("⚙️ Parameter Setup")
-        with st.form("p_f"):
-            pc, ps = st.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"]), st.selectbox("Skill", ["Soft Skill", "Service Skill"])
-            pn, pm = st.text_input("Parameter Name"), st.number_input("Max Score", min_value=1)
-            if st.form_submit_button("Add"):
-                new_p = pd.DataFrame([[pc, ps, pn, pm]], columns=param_cols)
-                st.session_state.param_db = pd.concat([st.session_state.param_db, new_p], ignore_index=True)
-                save_data(st.session_state.param_db, PARAM_FILE); st.rerun()
+    # --- 6. AGENT VIEW (FILTER & REVAL BUTTON LOGIC FIXED) ---
+    elif choice == "Audit View":
+        st.header("🔎 Agent Performance View")
+        df = st.session_state.audit_logs[st.session_state.audit_logs['Status'].isin(['Published', 'Re-validation Requested'])].copy()
+        
+        c1, c2 = st.columns(2)
+        f_week = c1.selectbox("Select Week", ["All"] + sorted(list(df['Week'].unique().astype(str))))
+        f_name = c2.selectbox("Select Agent Name", ["All"] + list(df['Agent Name'].unique()))
+        
+        if f_week != "All": df = df[df['Week'].astype(str) == f_week]
+        if f_name != "All": df = df[df['Agent Name'] == f_name]
+        
+        st.dataframe(df, use_container_width=True)
+        
+        st.divider()
+        st.subheader("Action Center")
+        for idx, row in df.iterrows():
+            # Button visible ONLY if score < 100 and Status is Published
+            if row['Total Score'] < 100 and row['Status'] == 'Published':
+                if st.button(f"Re-validate Audit: {row['Eval_ID']}", key=f"rev_btn_{idx}"):
+                    st.session_state.target_eval = row['Eval_ID']
+        
+        if 'target_eval' in st.session_state:
+            target = df[df['Eval_ID'] == st.session_state.target_eval].iloc[0]
+            with st.form("reval_form_agent"):
+                st.write(f"Challenging Audit: {st.session_state.target_eval}")
+                # Only show 0 score parameters
+                zero_p = [p for p in st.session_state.param_db['Parameter'].unique() if p in target and "0 (" in str(target[p])]
+                reasons = {p: st.text_input(f"Why {p}?", key=f"txt_{p}") for p in zero_p}
+                if st.form_submit_button("Submit Challenge"):
+                    m_idx = st.session_state.audit_logs[st.session_state.audit_logs['Eval_ID'] == st.session_state.target_eval].index[0]
+                    st.session_state.audit_logs.at[m_idx, 'Status'] = 'Re-validation Requested'
+                    st.session_state.audit_logs.at[m_idx, 'Reval_Reasons'] = str(reasons)
+                    save_data(st.session_state.audit_logs, AUDIT_FILE)
+                    del st.session_state.target_eval
+                    st.rerun()
+
+    # --- 7. AUDIT LOGS (ALL AUDITS) ---
+    elif choice == "Audit Logs":
+        st.header("📜 Master Audit Logs (All Status)")
+        st.dataframe(st.session_state.audit_logs, use_container_width=True)
+
+    # --- 8. QA RE-VALIDATION (ACCEPT/REJECT) ---
+    elif choice == "Re-Validation":
+        st.header("⚖️ QA Decision Panel")
+        reqs = st.session_state.audit_logs[st.session_state.audit_logs['Status'] == 'Re-validation Requested']
+        for idx, row in reqs.iterrows():
+            with st.expander(f"Request from {row['Agent Name']} (ID: {row['Eval_ID']})"):
+                reasons = eval(row['Reval_Reasons'])
+                for p, r in reasons.items():
+                    st.write(f"**Parameter:** {p} | **Agent Logic:** {r}")
+                    c1, c2 = st.columns(5)
+                    if c1.button("Accept ✅", key=f"acc_{idx}_{p}"):
+                        max_v = st.session_state.param_db[st.session_state.param_db['Parameter'] == p]['Max_Score'].values[0]
+                        st.session_state.audit_logs.at[idx, p] = max_v
+                        # Recalculate Total
+                        param_list = st.session_state.param_db['Parameter'].tolist()
+                        new_total = sum([v if isinstance(v, (int, float)) else 0 for v in st.session_state.audit_logs.loc[idx, st.session_state.audit_logs.columns.intersection(param_list)]])
+                        st.session_state.audit_logs.at[idx, 'Total Score'] = new_total
+                        st.session_state.audit_logs.at[idx, 'Status'] = 'Published'
+                        save_data(st.session_state.audit_logs, AUDIT_FILE); st.rerun()
+                    if c2.button("Reject ❌", key=f"rej_{idx}_{p}"):
+                        st.session_state.audit_logs.at[idx, 'Status'] = 'Published'
+                        save_data(st.session_state.audit_logs, AUDIT_FILE); st.rerun()
