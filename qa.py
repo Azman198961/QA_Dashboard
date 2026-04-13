@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 
 # --- custom pathao style inject ---
-PATHAO_RED = "#ED1C24"
+PATHAO_RED = "#FF7F7F"
 
 style = f"""
 <style>
