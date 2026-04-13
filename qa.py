@@ -30,7 +30,10 @@ param_cols = ['Channel', 'Skill_Type', 'Parameter', 'Max_Score']
 audit_cols = ['Week', 'Evaluation Date', 'Evaluator Name', 'Agent Name', 'Employee ID', 'Channel', 'Interaction Date', 'Interaction Time', 'Eval_ID', 'QA Feedback', 'Status', 'Total Score']
 
 def load_data(file, cols):
-    return pd.read_csv(file) if os.path.exists(file) else pd.DataFrame(columns=cols)
+    if os.path.exists(file):
+        df = pd.read_csv(file)
+        return df if not df.empty else pd.DataFrame(columns=cols)
+    return pd.DataFrame(columns=cols)
 
 def save_data(df, file):
     df.to_csv(file, index=False)
@@ -62,7 +65,7 @@ else:
     choice = st.sidebar.selectbox("Go to", nav[st.session_state.role])
     if st.sidebar.button("Logout"): st.session_state.logged_in = False; st.rerun()
 
-    # --- AGENT DETAILS (FIXED CHANNEL SAVING) ---
+    # --- AGENT DETAILS ---
     if choice == "Agent Details":
         st.header("👥 Agent Management")
         t1, t2, t3 = st.tabs(["Add Agent", "Update Agent", "Agent List"])
@@ -75,15 +78,15 @@ else:
                 n_gen = c1.selectbox("Gender", ["Male", "Female", "Other"])
                 n_con = c2.text_input("Contact Number")
                 n_emg = c1.text_input("Emergency Contact")
-                n_chan = c2.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"]) # FIXED
+                n_chan = c2.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
                 n_stat = st.selectbox("Status", ["Active", "Resigned"])
                 
                 if st.form_submit_button("Save New Agent", type="primary"):
                     if n_id and n_name:
-                        new_data = pd.DataFrame([[n_id, n_name, n_gen, n_con, n_emg, n_chan, n_stat]], columns=agent_cols)
-                        st.session_state.agent_db = pd.concat([st.session_state.agent_db, new_data], ignore_index=True)
+                        new_row = pd.DataFrame([[n_id, n_name, n_gen, n_con, n_emg, n_chan, n_stat]], columns=agent_cols)
+                        st.session_state.agent_db = pd.concat([st.session_state.agent_db, new_row], ignore_index=True)
                         save_data(st.session_state.agent_db, AGENT_FILE)
-                        st.success(f"Agent {n_name} saved for {n_chan}!")
+                        st.success(f"Saved: {n_name} ({n_chan})")
                         st.rerun()
 
         with t2:
@@ -103,69 +106,98 @@ else:
                         idx = st.session_state.agent_db[st.session_state.agent_db['Name'] == sel_up].index[0]
                         st.session_state.agent_db.loc[idx] = [u_id, sel_up, u_gen, u_con, u_emg, u_chan, u_stat]
                         save_data(st.session_state.agent_db, AGENT_FILE)
-                        st.success("Updated Successfully!")
+                        st.success("Updated!")
                         st.rerun()
 
         with t3:
-            filt = st.selectbox("Filter by Channel", ["All", "Inbound", "Live Chat", "Report Issue", "Complaint Management"])
-            df = st.session_state.agent_db if filt == "All" else st.session_state.agent_db[st.session_state.agent_db['Channel'] == filt]
-            st.table(df)
+            filt = st.selectbox("Filter Agent View", ["All", "Inbound", "Live Chat", "Report Issue", "Complaint Management"])
+            df_view = st.session_state.agent_db if filt == "All" else st.session_state.agent_db[st.session_state.agent_db['Channel'] == filt]
+            st.dataframe(df_view, use_container_width=True)
 
-    # --- QA AUDIT ENTRY (FIXED ID FETCHING) ---
+    # --- QA AUDIT ENTRY (FIXED DYNAMIC FILTERING) ---
     elif choice == "QA Audit Entry":
         st.header("📝 QA Audit Entry")
+        
+        # ১. আগে চ্যানেল সিলেক্ট করবেন (ফরমের বাইরে রাখা হয়েছে ভালো রিফ্রেশের জন্য)
+        sel_ch = st.selectbox("1. Select Channel First", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"], key="qa_ch_sel")
+        
+        # ২. সিলেক্ট করা চ্যানেলের এজেন্টদের ফিল্টার করা
+        relevant_agents = st.session_state.agent_db[
+            (st.session_state.agent_db['Channel'] == sel_ch) & 
+            (st.session_state.agent_db['Status'] == 'Active')
+        ]
+        
         with st.form("audit_entry_form", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
-            ch = c1.selectbox("Select Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
-            # Filter Agents by the selected channel
-            active_agents = st.session_state.agent_db[(st.session_state.agent_db['Channel'] == ch) & (st.session_state.agent_db['Status'] == 'Active')]
-            ag = c2.selectbox("Agent Name", ["Select"] + active_agents['Name'].tolist())
+            c1, c2 = st.columns(2)
+            # ৩. শুধুমাত্র ওই চ্যানেলের এজেন্টদের ড্রপডাউন
+            ag_name = c1.selectbox("2. Select Agent Name", [""] + relevant_agents['Name'].tolist())
             
-            # Dynamic ID Show
-            eid = active_agents[active_agents['Name'] == ag]['ID'].values[0] if ag != "Select" else "---"
-            c3.info(f"Agent ID: {eid}")
+            # ৪. আইডি অটো বের করা
+            if ag_name != "":
+                emp_id_val = relevant_agents[relevant_agents['Name'] == ag_name]['ID'].values[0]
+            else:
+                emp_id_val = "---"
+            
+            c2.info(f"Agent ID: {emp_id_val}")
             
             f1, f2, f3 = st.columns(3)
-            iid, idt = f1.text_input("Interaction ID"), f2.date_input("Date")
-            itm = f3.text_input("Time (Manual)")
+            int_id = f1.text_input("Interaction ID")
+            int_date = f2.date_input("Date")
+            int_time = f3.text_input("Time (Manual)")
             
-            feed = st.text_area("Feedback")
-            params = st.session_state.param_db[st.session_state.param_db['Channel'] == ch]
+            f_back = st.text_area("Feedback")
+            
+            # স্কোরিং প্যারামিটার (চ্যানেল অনুযায়ী)
+            params = st.session_state.param_db[st.session_state.param_db['Channel'] == sel_ch]
             scores = {}
-            for idx, row in params.iterrows():
-                st.markdown(f'<div class="param-box">{row["Skill_Type"]} | {row["Parameter"]} ({row["Max_Score"]})</div>', unsafe_allow_html=True)
-                dm = st.checkbox(f"Demark", key=f"dm_{idx}")
-                scores[row['Parameter']] = 0 if dm else row['Max_Score']
+            if params.empty:
+                st.warning(f"No parameters found for {sel_ch}. Please add them in 'Audit Parameters'.")
+            else:
+                for idx, row in params.iterrows():
+                    st.markdown(f'<div class="param-box">{row["Skill_Type"]} | {row["Parameter"]} ({row["Max_Score"]})</div>', unsafe_allow_html=True)
+                    dm = st.checkbox(f"Demark", key=f"eval_dm_{idx}")
+                    scores[row['Parameter']] = 0 if dm else row['Max_Score']
 
-            if st.form_submit_button("Submit Audit"):
-                if ag != "Select" and iid:
-                    entry = {
-                        'Week': datetime.now().isocalendar()[1], 'Evaluation Date': datetime.now().strftime("%Y-%m-%d"),
-                        'Evaluator Name': st.session_state.user_id, 'Agent Name': ag, 'Employee ID': eid,
-                        'Channel': ch, 'Interaction Date': str(idt), 'Interaction Time': itm,
-                        'Eval_ID': iid, 'QA Feedback': feed, 'Status': 'Pending', 'Total Score': sum(scores.values())
+            if st.form_submit_button("Submit Audit", type="primary"):
+                if ag_name != "" and int_id != "":
+                    new_audit = {
+                        'Week': datetime.now().isocalendar()[1],
+                        'Evaluation Date': datetime.now().strftime("%Y-%m-%d"),
+                        'Evaluator Name': st.session_state.user_id,
+                        'Agent Name': ag_name,
+                        'Employee ID': emp_id_val,
+                        'Channel': sel_ch,
+                        'Interaction Date': str(int_date),
+                        'Interaction Time': int_time,
+                        'Eval_ID': int_id,
+                        'QA Feedback': f_back,
+                        'Status': 'Pending',
+                        'Total Score': sum(scores.values())
                     }
-                    st.session_state.audit_logs = pd.concat([st.session_state.audit_logs, pd.DataFrame([entry])], ignore_index=True)
+                    st.session_state.audit_logs = pd.concat([st.session_state.audit_logs, pd.DataFrame([new_audit])], ignore_index=True)
                     save_data(st.session_state.audit_logs, AUDIT_FILE)
-                    st.success("Audit Submitted!")
+                    st.success("Audit Recorded Successfully!")
                     st.rerun()
+                else:
+                    st.error("Please select Agent and enter Interaction ID")
 
-    # --- PARAMETERS (SKILL TYPE RESTORED) ---
+    # --- PARAMETERS ---
     elif choice == "Audit Parameters":
         st.header("⚙️ Setup Parameters")
-        with st.form("param_form"):
+        with st.form("param_form", clear_on_submit=True):
             c1, c2 = st.columns(2)
-            pc = c1.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
-            psk = c2.selectbox("Skill Type", ["Soft Skill", "Service Skill"])
-            pn = st.text_input("Parameter Name")
-            psc = st.number_input("Max Score", min_value=1)
-            if st.form_submit_button("Add"):
-                new_p = pd.DataFrame([[pc, psk, pn, psc]], columns=param_cols)
+            p_ch = c1.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
+            p_sk = c2.selectbox("Skill Type", ["Soft Skill", "Service Skill"])
+            p_name = st.text_input("Parameter Name")
+            p_max = st.number_input("Max Score", min_value=1)
+            if st.form_submit_button("Add Parameter"):
+                new_p = pd.DataFrame([[p_ch, p_sk, p_name, p_max]], columns=param_cols)
                 st.session_state.param_db = pd.concat([st.session_state.param_db, new_p], ignore_index=True)
                 save_data(st.session_state.param_db, PARAM_FILE)
+                st.success("Parameter Added!")
                 st.rerun()
-        st.dataframe(st.session_state.param_db)
+        st.dataframe(st.session_state.param_db, use_container_width=True)
 
     elif choice == "Audit Logs":
-        st.header("📋 All Logs")
-        st.dataframe(st.session_state.audit_logs)
+        st.header("📋 Master Logs")
+        st.dataframe(st.session_state.audit_logs, use_container_width=True)
