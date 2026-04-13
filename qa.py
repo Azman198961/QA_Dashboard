@@ -18,7 +18,6 @@ st.markdown(f"""
     label, .stMarkdown p {{ color: white !important; font-weight: bold; }}
     button[kind="primary"] {{ background-color: white !important; color: {PATHAO_RED} !important; border-radius: 4px; font-weight: bold; border: none; }}
     .param-box {{ background-color: black; padding: 10px; border-radius: 5px; border: 1px solid white; margin-bottom: 8px; }}
-    .stDataFrame {{ background-color: white; border-radius: 5px; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -41,7 +40,7 @@ if 'param_db' not in st.session_state: st.session_state.param_db = load_data(PAR
 if 'audit_logs' not in st.session_state: st.session_state.audit_logs = load_data(AUDIT_FILE, [])
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 
-# --- 3. LOGIN (SIMPLE ROLE & PASSWORD) ---
+# --- 3. LOGIN ---
 if not st.session_state.logged_in:
     st.title("Pathao Quality Portal")
     with st.form("login_form"):
@@ -55,7 +54,7 @@ if not st.session_state.logged_in:
 
 # --- 4. MAIN APPLICATION ---
 else:
-    st.sidebar.subheader(f"Logged in as: {st.session_state.role}")
+    st.sidebar.subheader(f"Role: {st.session_state.role}")
     nav = {
         "Admin": ["Agent Details", "Audit Parameters", "Audit Logs"],
         "QA": ["QA Audit Entry", "Publish Audits", "Audit Logs"],
@@ -71,7 +70,7 @@ else:
         st.header("👥 Agent Management")
         t1, t2, t3 = st.tabs(["Add Agent", "Update Agent", "Agent List"])
         with t1:
-            with st.form("add_ag", clear_on_submit=True):
+            with st.form("add_ag"):
                 c1, c2 = st.columns(2)
                 n_id, n_name = c1.text_input("Employee ID"), c2.text_input("Agent Name")
                 n_gen, n_con = c1.selectbox("Gender", ["Male", "Female"]), c2.text_input("Contact")
@@ -80,7 +79,7 @@ else:
                 if st.form_submit_button("Save Agent"):
                     new_ag = pd.DataFrame([[n_id, n_name, n_gen, n_con, n_emg, n_chan, n_stat]], columns=agent_cols)
                     st.session_state.agent_db = pd.concat([st.session_state.agent_db, new_ag], ignore_index=True)
-                    save_data(st.session_state.agent_db, AGENT_FILE); st.success("Agent added successfully!")
+                    save_data(st.session_state.agent_db, AGENT_FILE); st.success("Saved!")
         with t2:
             ag_up = st.selectbox("Select Agent", [""] + st.session_state.agent_db['Name'].tolist())
             if ag_up:
@@ -96,7 +95,7 @@ else:
         with t3:
             st.dataframe(st.session_state.agent_db, use_container_width=True)
 
-    # --- QA AUDIT ENTRY ---
+    # --- QA AUDIT ENTRY (DEMARK REASON ADDED) ---
     elif choice == "QA Audit Entry":
         st.header("📝 QA Audit Entry")
         sel_ch = st.selectbox("1. Channel First", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
@@ -110,44 +109,50 @@ else:
             
             f1, f2, f3 = st.columns(3)
             int_id, int_dt, int_tm = f1.text_input("Interaction ID"), f2.date_input("Date"), f3.text_input("Time (Manual)")
-            feedback = st.text_area("Feedback")
             
+            # Parameters with Conditional Reason Box
             params = st.session_state.param_db[st.session_state.param_db['Channel'] == sel_ch]
             scores = {}
             for _, row in params.iterrows():
                 st.markdown(f'<div class="param-box">{row["Skill_Type"]} | **{row["Parameter"]}** (Max: {row["Max_Score"]})</div>', unsafe_allow_html=True)
                 dm = st.checkbox(f"Demark {row['Parameter']}", key=f"dm_{row['Parameter']}")
-                scores[row['Parameter']] = 0 if dm else row['Max_Score']
+                
+                if dm:
+                    reason = st.text_input(f"Reason for Demarking {row['Parameter']}", key=f"reason_{row['Parameter']}")
+                    scores[row['Parameter']] = f"0 ({reason})"
+                else:
+                    scores[row['Parameter']] = row['Max_Score']
             
             if st.form_submit_button("Submit Evaluation"):
                 if ag_nm and int_id:
-                    # Calculation for Soft and Service Skills %
+                    # Logic for Soft & Service Skill % (Only taking numeric part)
+                    def get_val(v): return 0 if isinstance(v, str) else v
+                    
                     soft_p = params[params['Skill_Type'] == 'Soft Skill']
                     serv_p = params[params['Skill_Type'] == 'Service Skill']
                     
-                    soft_earned = sum([scores[p] for p in soft_p['Parameter'] if p in scores])
+                    soft_earned = sum([get_val(scores[p]) for p in soft_p['Parameter'] if p in scores])
                     soft_max = soft_p['Max_Score'].sum()
-                    serv_earned = sum([scores[p] for p in serv_p['Parameter'] if p in scores])
+                    serv_earned = sum([get_val(scores[p]) for p in serv_p['Parameter'] if p in scores])
                     serv_max = serv_p['Max_Score'].sum()
                     
                     entry = {
-                        'Week': datetime.now().isocalendar()[1],
-                        'Evaluation Date': datetime.now().strftime("%Y-%m-%d"),
+                        'Week': datetime.now().isocalendar()[1], 'Evaluation Date': datetime.now().strftime("%Y-%m-%d"),
                         'Agent Name': ag_nm, 'Employee ID': eid, 'Channel': sel_ch,
                         'Eval_ID': int_id, 'Interaction Date': str(int_dt), 'Interaction Time': int_tm,
-                        'QA Feedback': feedback, 'Status': 'Pending'
+                        'Status': 'Pending'
                     }
-                    entry.update(scores) # Here individual parameters are saved as columns
-                    entry['Total Score'] = sum(scores.values())
+                    entry.update(scores)
+                    entry['Total Score'] = sum([get_val(v) for v in scores.values()])
                     entry['Soft Skill %'] = round((soft_earned/soft_max)*100, 2) if soft_max > 0 else 0
                     entry['Service Skill %'] = round((serv_earned/serv_max)*100, 2) if serv_max > 0 else 0
                     
                     st.session_state.audit_logs = pd.concat([st.session_state.audit_logs, pd.DataFrame([entry])], ignore_index=True)
-                    save_data(st.session_state.audit_logs, AUDIT_FILE); st.success("Audit submitted!")
+                    save_data(st.session_state.audit_logs, AUDIT_FILE); st.success("Audit submitted with reasons!")
 
     # --- PUBLISH AUDITS ---
     elif choice == "Publish Audits":
-        st.header("📢 Pending for Publication")
+        st.header("📢 Pending Publication")
         pending = st.session_state.audit_logs[st.session_state.audit_logs['Status'] == 'Pending']
         if not pending.empty:
             st.dataframe(pending, use_container_width=True)
@@ -156,51 +161,41 @@ else:
                 save_data(st.session_state.audit_logs, AUDIT_FILE); st.rerun()
         else: st.info("No audits pending.")
 
-    # --- AUDIT LOGS & AUDIT VIEW (PARAMETER WISE) ---
+    # --- AUDIT LOGS & AUDIT VIEW ---
     elif choice in ["Audit Logs", "Audit View"]:
-        st.header("📋 Detailed Audit Logs")
-        
+        st.header("📊 Detailed Audit View")
         display_logs = st.session_state.audit_logs.copy()
-        if choice == "Audit View": # Agent Login View
+        if choice == "Audit View":
             display_logs = display_logs[display_logs['Status'] == 'Published']
             
         if not display_logs.empty:
-            # Week Filter
             weeks = ["All"] + sorted(list(display_logs['Week'].unique().astype(str)))
             sel_week = st.selectbox("Filter by Week", weeks)
             if sel_week != "All":
                 display_logs = display_logs[display_logs['Week'].astype(str) == sel_week]
             
-            # Employee ID Filter (For specific searching)
-            emp_search = st.text_input("Search by Employee ID")
+            emp_search = st.text_input("Filter by Employee ID")
             if emp_search:
                 display_logs = display_logs[display_logs['Employee ID'].astype(str).str.contains(emp_search)]
 
-            # Reordering columns for better view: ID, Name, Channel, Interaction Info, then Parameters, then Scores
-            # This ensures Agent sees Evaluation ID, Date, Time and Marks clearly
-            base_info = ['Week', 'Evaluation Date', 'Agent Name', 'Employee ID', 'Channel', 'Eval_ID', 'Interaction Date', 'Interaction Time']
-            scores_info = ['Total Score', 'Soft Skill %', 'Service Skill %', 'QA Feedback', 'Status']
+            # Arrange Columns
+            base = ['Week', 'Evaluation Date', 'Agent Name', 'Employee ID', 'Channel', 'Eval_ID', 'Interaction Date', 'Interaction Time']
+            scores = ['Total Score', 'Soft Skill %', 'Service Skill %', 'Status']
+            params_only = [c for c in display_logs.columns if c not in base + scores]
             
-            # Identify all dynamic parameter columns (everything else)
-            all_cols = display_logs.columns.tolist()
-            param_cols_dynamic = [c for c in all_cols if c not in base_info + scores_info]
-            
-            final_col_order = base_info + param_cols_dynamic + scores_info
-            st.dataframe(display_logs[final_col_order], use_container_width=True)
+            st.dataframe(display_logs[base + params_only + scores], use_container_width=True)
         else:
-            st.info("No audit data available yet.")
+            st.info("No data available.")
 
-    # --- PARAMETERS SETUP ---
+    # --- PARAMETERS ---
     elif choice == "Audit Parameters":
-        st.header("⚙️ Scorecard Parameters")
+        st.header("⚙️ Parameters")
         with st.form("p_f"):
             c1, c2 = st.columns(2)
-            p_ch = c1.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"])
-            p_sk = c2.selectbox("Skill Type", ["Soft Skill", "Service Skill"])
-            p_nm = st.text_input("Parameter Name")
-            p_mx = st.number_input("Max Score", min_value=1)
-            if st.form_submit_button("Add to Scorecard"):
-                new_p = pd.DataFrame([[p_ch, p_sk, p_nm, p_mx]], columns=param_cols)
+            pc, ps = c1.selectbox("Channel", ["Inbound", "Live Chat", "Report Issue", "Complaint Management"]), c2.selectbox("Skill", ["Soft Skill", "Service Skill"])
+            pn, pm = st.text_input("Name"), st.number_input("Max Score", min_value=1)
+            if st.form_submit_button("Add Parameter"):
+                new_p = pd.DataFrame([[pc, ps, pn, pm]], columns=param_cols)
                 st.session_state.param_db = pd.concat([st.session_state.param_db, new_p], ignore_index=True)
                 save_data(st.session_state.param_db, PARAM_FILE); st.rerun()
         st.dataframe(st.session_state.param_db, use_container_width=True)
